@@ -13,6 +13,7 @@ pip install -r requirements.txt
 ```sh
 scrapy runspider trending_spider.py # this will get trending repositories
 scrapy runspider info_spider.py # then, for each trending repository, it will extract info.
+python readme_reader.py # to process their README.md files as well.
 ```
 
 ## Getting Started with LinkedIn Poster

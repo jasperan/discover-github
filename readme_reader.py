@@ -22,7 +22,12 @@ with open('output.txt', 'r') as file:
 print('Markdown List: {}'.format(markdown_list))
 for x in markdown_list:
     response = requests.get(x)
-    print(response.text)
+    #print(response.txt)
+    readme_txt = response.text
 
+    # TODO
+    # with this text, summarize it calling a Cohere model
+
+    # build a LinkedIn post from the response.
 
 
