@@ -23,7 +23,6 @@ class GithubInfoSpider(scrapy.Spider):
         description_list = list()
         about = '/html/body/div[1]/div[4]/div/main/turbo-frame/div/div/div/div[2]/div[2]/div/div[1]/div/div/p'
 
-        readme_uri = 'https://raw.githubusercontent.com{}/master/README.md'
 
         '''
         Parse the response and extract the links.
@@ -48,6 +47,10 @@ class GithubInfoSpider(scrapy.Spider):
         description_list.append(description)
         
         print(description_list)
+
+        response = requests.get(readme_uri)
+
+        print(response.text)
     
 
 
