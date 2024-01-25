@@ -1,5 +1,7 @@
 # OCI GenAI Automatic Content Extractor & Summarizer
 
+![](./img/repo_logo.png)
+
 This project gets the 25 trending projects from a day (from [here](https://github.com/trending)), reads their README.md files, and summarizes them in a way which is ready for social media.
 
 Companies can use this in their content generation pipeline strategies, or individuals trying to grow their social media following with organic and up-to-date (fresh everyday) content!
