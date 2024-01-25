@@ -15,38 +15,50 @@
 
 import oci
 import yaml
+#import logging
+#logging.getLogger('oci').setLevel(logging.DEBUG)
 
-with open('config.yaml', 'r') as file:
-    config_data = yaml.safe_load(file)
+def main(summary_txt: str = "") -> None:
 
-compartment_id = config_data['compartment_id']
-CONFIG_PROFILE = config_data['config_profile']
-config = oci.config.from_file('~/.oci/config', CONFIG_PROFILE)
+    with open('config.yaml', 'r') as file:
+        config_data = yaml.safe_load(file)
 
-# Service endpoint
-endpoint = "https://generativeai.aiservice.us-chicago-1.oci.oraclecloud.com"
+    compartment_id = config_data['compartment_id']
+    CONFIG_PROFILE = config_data['config_profile']
+    config = oci.config.from_file('~/.oci/config', CONFIG_PROFILE)
 
-generative_ai_client = oci.generative_ai.GenerativeAiClient(config=config, service_endpoint=endpoint, retry_strategy=oci.retry.NoneRetryStrategy(), timeout=(10,240))
+    # Service endpoint
+    endpoint = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
 
-with open('files/summarize_data.txt', 'r') as file:
-    text_to_summarize = file.read()
+    generative_ai_inference_client = oci.generative_ai_inference.GenerativeAiInferenceClient(config=config, service_endpoint=endpoint, retry_strategy=oci.retry.NoneRetryStrategy(), timeout=(10,240))
+    
+    # You can also load the summary text from a file, or as a parameter in main
+    #with open('files/summarize_data.txt', 'r') as file:
+    #    text_to_summarize = file.read()
 
-summarize_text_detail = oci.generative_ai.models.SummarizeTextDetails()
-summarize_text_detail.serving_mode = oci.generative_ai.models.OnDemandServingMode(model_id="cohere.command")
-summarize_text_detail.compartment_id = compartment_id
-summarize_text_detail.input = text_to_summarize
-summarize_text_detail.additional_command = "Generate a teaser post for this article. Share an interesting insight to captivate attention."
-summarize_text_detail.extractiveness = "AUTO" # HIGH, LOW
-summarize_text_detail.format = "AUTO" # brackets, paragraph
-summarize_text_detail.length = "LONG" # high, AUTO
-summarize_text_detail.temperature = .3 # [0,1]
+    summarize_text_detail = oci.generative_ai_inference.models.SummarizeTextDetails()
+    summarize_text_detail.serving_mode = oci.generative_ai_inference.models.OnDemandServingMode(model_id="cohere.command")
+    summarize_text_detail.compartment_id = compartment_id
+    #summarize_text_detail.input = text_to_summarize
+    summarize_text_detail.input = summary_txt
+    summarize_text_detail.additional_command = "Generate a teaser post for this Markdown article. Share an interesting insight to captivate attention."
+    summarize_text_detail.extractiveness = "AUTO" # HIGH, LOW
+    summarize_text_detail.format = "AUTO" # brackets, paragraph
+    summarize_text_detail.length = "LONG" # high, AUTO
+    summarize_text_detail.temperature = .25 # [0,1]
 
-if "<compartment_ocid>" in compartment_id:
-    print("ERROR:Please update your compartment id in target python file")
-    quit()
+    if "<compartment_ocid>" in compartment_id:
+        print("ERROR:Please update your compartment id in target python file")
+        quit()
 
-summarize_text_response = generative_ai_client.summarize_text(summarize_text_detail)
+    summarize_text_response = generative_ai_inference_client.summarize_text(summarize_text_detail)
 
-# Print result
-print("**************************Summarize Texts Result**************************")
-print(summarize_text_response.data)
+    # Print result
+    #print("**************************Summarize Texts Result**************************")
+    #print(summarize_text_response.data)
+
+    return summarize_text_response.data
+
+
+if __name__ == '__main__':
+    main()
