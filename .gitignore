@@ -164,3 +164,6 @@ cython_debug/
 
 # remove configuration file with sensitive data
 config.yaml
+
+# remove output files that aren't the first one
+outputs/output_*
