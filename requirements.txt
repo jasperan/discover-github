@@ -1,5 +1,4 @@
 scrapy
 PyGithub
-linkedin-api-client
 oci
 nltk
