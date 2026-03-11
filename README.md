@@ -22,6 +22,29 @@ LLM Hyperparams used:
 
 ## Installation
 
+<!-- one-command-install -->
+> **One-command install** — clone, configure, and run in a single step:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/jasperan/discover-github/main/install.sh | bash
+> ```
+>
+> <details><summary>Advanced options</summary>
+>
+> Override install location:
+> ```bash
+> PROJECT_DIR=/opt/myapp curl -fsSL https://raw.githubusercontent.com/jasperan/discover-github/main/install.sh | bash
+> ```
+>
+> Or install manually:
+> ```bash
+> git clone https://github.com/jasperan/discover-github.git
+> cd discover-github
+> # See below for setup instructions
+> ```
+> </details>
+
+
 ```sh
 pip install -r requirements.txt
 ```
