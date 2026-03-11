@@ -167,3 +167,20 @@ config.yaml
 
 # remove output files that aren't the first one
 outputs/output_*
+
+# Generated output directories and reports
+outputs/*/
+outputs/newsletter_*.md
+outputs/report_*.md
+
+# Planning/design docs
+docs/plans/
+task_plan.md
+findings.md
+progress.md
+
+# Playwright MCP
+.playwright-mcp/
+
+# Dogfood reports
+dogfood-output/

@@ -1,0 +1,18 @@
+# discover-github configuration
+# Copy this to config.yaml and fill in your settings.
+
+# GitHub Personal Access Token (optional but recommended)
+# Without it: 60 requests/hour. With it: 5,000 requests/hour.
+# Create at: https://github.com/settings/tokens (needs no special scopes for public repos)
+github_token: ""  # or set GITHUB_TOKEN environment variable
+
+# Oracle Database connection (for persistence + vector search)
+db_user: "discover_github"
+db_password: "discover_github"
+db_dsn: "localhost:1525/FREEPDB1"
+
+# OCI Generative AI settings (for LLM analysis)
+compartment_id: "ocid1.compartment.oc1..your-compartment-id"
+config_profile: "DEFAULT"  # Profile name in ~/.oci/config
+genai_endpoint: "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+genai_model: "cohere.command-r-plus"  # or "cohere.command" for the original model

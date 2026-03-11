@@ -1,4 +1,11 @@
-scrapy
 PyGithub
 oci
+oracledb
+pyyaml
+requests
 nltk
+python-dotenv
+sentence-transformers
+
+# Legacy (kept for backward compatibility with old pipeline)
+scrapy
