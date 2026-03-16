@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -144,6 +145,8 @@ def run_pipeline(args):
     for i, meta in enumerate(repos):
         logger.info(f"  [{i+1}/{len(repos)}] Enriching {meta.full_name}...")
         gh.enrich_repo(meta)
+        if i < len(repos) - 1:
+            time.sleep(1)  # Rate limit: avoid hitting GitHub API limits
 
     # --- Step 4: Generate embeddings + deduplicate ---
     logger.info("Generating embeddings and checking for duplicates...")

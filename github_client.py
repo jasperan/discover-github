@@ -8,6 +8,7 @@ that powers the breakout scoring engine and intelligent analysis.
 
 import os
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field, asdict
 from typing import Optional
@@ -231,7 +232,19 @@ class GitHubClient:
                 meta.readme_content = None
 
         except RateLimitExceededException:
-            logger.warning(f"Rate limit hit while enriching {meta.full_name}")
+            logger.warning(f"Rate limit hit while enriching {meta.full_name}, retrying with backoff...")
+            for attempt in range(3):
+                wait = 2 ** (attempt + 1)  # 2, 4, 8 seconds
+                logger.info(f"  Backoff attempt {attempt + 1}/3: waiting {wait}s...")
+                time.sleep(wait)
+                try:
+                    return self.enrich_repo(meta)
+                except RateLimitExceededException:
+                    if attempt == 2:
+                        logger.error(f"Rate limit still exceeded after 3 retries for {meta.full_name}")
+                except GithubException as retry_err:
+                    logger.warning(f"Retry failed for {meta.full_name}: {retry_err}")
+                    break
         except GithubException as e:
             logger.warning(f"Error enriching {meta.full_name}: {e}")
 
