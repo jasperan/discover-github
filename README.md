@@ -1,8 +1,8 @@
-# discover-github — Intelligent GitHub Trending Discovery Engine
+# discover-github: Intelligent GitHub Trending Discovery Engine
 
 ![](./img/repo_logo.png)
 
-An intelligent content discovery engine that finds breakout GitHub repositories, scores them with a multi-signal algorithm, analyzes them with LLMs, and generates platform-ready social media content — all backed by Oracle AI Vector Search for semantic deduplication and trend tracking.
+An intelligent content discovery engine that finds breakout GitHub repositories, scores them with a multi-signal algorithm, analyzes them with LLMs, and generates platform-ready social media content, all backed by Oracle AI Vector Search for semantic deduplication and trend tracking.
 
 ## What It Does
 
@@ -40,7 +40,7 @@ Repos are tiered: **S** (80+) → **A** (65+) → **B** (50+) → **C** (35+) �
 ## Installation
 
 <!-- one-command-install -->
-> **One-command install** — clone, configure, and run in a single step:
+> **One-command install** (clone, configure, and run in a single step):
 >
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/jasperan/discover-github/main/install.sh | bash
@@ -124,16 +124,16 @@ python discover.py --strategy all --limit 50 -v
 
 Generated content is saved per-repo in `outputs/<owner>__<repo>/`:
 
-- `twitter_thread.txt` — Multi-tweet thread with hook, details, stats
-- `linkedin_post.txt` — Professional post with hashtags and CTA
-- `newsletter_entry.md` — Digest entry for email newsletters
-- `discord_embed.json` — Rich embed for Discord/Slack webhooks
-- `blog_post.md` — 800-word blog introduction
-- `analysis.json` — Full scoring breakdown and LLM analysis
+- `twitter_thread.txt`: Multi-tweet thread with hook, details, stats
+- `linkedin_post.txt`: Professional post with hashtags and CTA
+- `newsletter_entry.md`: Digest entry for email newsletters
+- `discord_embed.json`: Rich embed for Discord/Slack webhooks
+- `blog_post.md`: 800-word blog introduction
+- `analysis.json`: Full scoring breakdown and LLM analysis
 
 Daily aggregates:
-- `outputs/newsletter_YYYY-MM-DD.md` — Full newsletter with trend synthesis
-- `outputs/report_YYYY-MM-DD.md` — Summary ranking report
+- `outputs/newsletter_YYYY-MM-DD.md`: Full newsletter with trend synthesis
+- `outputs/report_YYYY-MM-DD.md`: Summary ranking report
 
 ## Architecture
 

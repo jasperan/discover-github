@@ -184,3 +184,14 @@ progress.md
 
 # Dogfood reports
 dogfood-output/
+CLAUDE.md
+
+# Agent/skill directories (local-only, never commit)
+.agents/
+.claude/
+.crush/
+.openhands/
+.serena/
+
+# Generated content
+content/
