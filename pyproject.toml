@@ -1,0 +1,28 @@
+[project]
+name = "discover-github"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "PyGithub",
+    "oci",
+    "oracledb",
+    "pyyaml",
+    "requests",
+    "nltk",
+    "python-dotenv",
+    "sentence-transformers",
+    "scrapy"
+]
+
+[dependency-groups]
+dev = []
+
+[tool.uv]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
