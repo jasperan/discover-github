@@ -15,6 +15,8 @@ from typing import Optional
 
 import oracledb
 
+from embeddings import EMBEDDING_DIM
+
 logger = logging.getLogger(__name__)
 
 # Schema version for migrations
@@ -22,7 +24,7 @@ SCHEMA_VERSION = 1
 
 DDL_STATEMENTS = [
     # Core repository table with vector embedding
-    """
+    f"""
     CREATE TABLE repositories (
         id               NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         full_name        VARCHAR2(500) NOT NULL UNIQUE,
@@ -52,7 +54,7 @@ DDL_STATEMENTS = [
         first_seen_at    TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP,
         last_updated_at  TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP,
         readme_content   CLOB,
-        embedding        VECTOR(384, FLOAT32)
+        embedding        VECTOR({EMBEDDING_DIM}, FLOAT32)
     )
     """,
 
@@ -138,22 +140,24 @@ class DiscoverDB:
     def initialize_schema(self):
         """Create tables and indexes if they don't exist."""
         conn = self.connect()
-        cur = conn.cursor()
+        try:
+            cur = conn.cursor()
 
-        for ddl in DDL_STATEMENTS:
-            try:
-                cur.execute(ddl)
-                logger.debug(f"Executed: {ddl[:60]}...")
-            except oracledb.DatabaseError as e:
-                error_code = e.args[0].code if e.args else 0
-                # ORA-00955: name already exists — skip
-                # ORA-01408: index column list already indexed
-                if error_code in (955, 1408):
-                    continue
-                logger.warning(f"DDL warning ({error_code}): {e}")
+            for ddl in DDL_STATEMENTS:
+                try:
+                    cur.execute(ddl)
+                    logger.debug(f"Executed: {ddl[:60]}...")
+                except oracledb.DatabaseError as e:
+                    error_code = e.args[0].code if e.args else 0
+                    # ORA-00955: name already exists — skip
+                    # ORA-01408: index column list already indexed
+                    if error_code in (955, 1408):
+                        continue
+                    logger.warning(f"DDL warning ({error_code}): {e}")
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
         logger.info("Schema initialized")
 
     def upsert_repo(self, meta, embedding: Optional[list[float]] = None) -> int:
@@ -162,43 +166,77 @@ class DiscoverDB:
         If the repo already exists, updates metrics and last_updated_at.
         """
         conn = self.connect()
-        cur = conn.cursor()
+        try:
+            cur = conn.cursor()
 
-        topics_json = json.dumps(meta.topics) if meta.topics else "[]"
+            topics_json = json.dumps(meta.topics) if meta.topics else "[]"
 
-        # Check if repo exists
-        cur.execute(
-            "SELECT id FROM repositories WHERE full_name = :1",
-            [meta.full_name],
-        )
-        row = cur.fetchone()
+            # Check if repo exists
+            cur.execute(
+                "SELECT id FROM repositories WHERE full_name = :1",
+                [meta.full_name],
+            )
+            row = cur.fetchone()
 
-        if row:
-            repo_id = row[0]
-            # Update scalar columns first
-            cur.execute("""
-                UPDATE repositories SET
-                    description = :1, stars = :2, forks = :3,
-                    open_issues = :4, watchers = :5, subscribers = :6,
-                    contributor_count = :7, recent_commit_count = :8,
-                    has_ci = :9, language = :10,
-                    license_name = :11, is_archived = :12,
-                    repo_pushed_at = :13, repo_updated_at = :14,
-                    last_updated_at = SYSTIMESTAMP,
-                    size_kb = :15
-                WHERE id = :16
-            """, [
-                meta.description, meta.stars, meta.forks,
-                meta.open_issues, meta.watchers, meta.subscribers,
-                meta.contributor_count, meta.recent_commit_count,
-                1 if meta.has_ci else 0, meta.language,
-                meta.license_name, 1 if meta.is_archived else 0,
-                meta.pushed_at, meta.updated_at,
-                meta.size_kb,
-                repo_id,
-            ])
+            if row:
+                repo_id = row[0]
+                # Update scalar columns first
+                cur.execute("""
+                    UPDATE repositories SET
+                        description = :1, stars = :2, forks = :3,
+                        open_issues = :4, watchers = :5, subscribers = :6,
+                        contributor_count = :7, recent_commit_count = :8,
+                        has_ci = :9, language = :10,
+                        license_name = :11, is_archived = :12,
+                        repo_pushed_at = :13, repo_updated_at = :14,
+                        last_updated_at = SYSTIMESTAMP,
+                        size_kb = :15
+                    WHERE id = :16
+                """, [
+                    meta.description, meta.stars, meta.forks,
+                    meta.open_issues, meta.watchers, meta.subscribers,
+                    meta.contributor_count, meta.recent_commit_count,
+                    1 if meta.has_ci else 0, meta.language,
+                    meta.license_name, 1 if meta.is_archived else 0,
+                    meta.pushed_at, meta.updated_at,
+                    meta.size_kb,
+                    repo_id,
+                ])
+            else:
+                # Insert new repo (scalar columns only, then update LOB/VECTOR)
+                repo_id_var = cur.var(int)
+                cur.execute("""
+                    INSERT INTO repositories (
+                        full_name, owner, repo_name, description, url, homepage,
+                        language, stars, forks, open_issues, watchers,
+                        subscribers, contributor_count, recent_commit_count,
+                        has_ci, license_name, is_fork, is_archived, size_kb,
+                        default_branch, repo_created_at, repo_pushed_at,
+                        repo_updated_at
+                    ) VALUES (
+                        :1, :2, :3, :4, :5, :6,
+                        :7, :8, :9, :10, :11,
+                        :12, :13, :14,
+                        :15, :16, :17, :18, :19,
+                        :20, :21, :22,
+                        :23
+                    ) RETURNING id INTO :24
+                """, [
+                    meta.full_name, meta.owner, meta.name,
+                    meta.description, meta.url, meta.homepage,
+                    meta.language,
+                    meta.stars, meta.forks, meta.open_issues, meta.watchers,
+                    meta.subscribers, meta.contributor_count, meta.recent_commit_count,
+                    1 if meta.has_ci else 0, meta.license_name,
+                    1 if meta.is_fork else 0, 1 if meta.is_archived else 0,
+                    meta.size_kb, meta.default_branch,
+                    meta.created_at, meta.pushed_at, meta.updated_at,
+                    repo_id_var,
+                ])
+                repo_id = repo_id_var.getvalue()[0]
 
-            # Update LOB/VECTOR columns separately (ORA-24816 workaround)
+            # Update LOB/VECTOR columns separately (ORA-24816 workaround).
+            # Identical for both insert and update, so done once below.
             cur.execute(
                 "UPDATE repositories SET topics = :1 WHERE id = :2",
                 [topics_json, repo_id],
@@ -213,58 +251,11 @@ class DiscoverDB:
                     "UPDATE repositories SET embedding = :1 WHERE id = :2",
                     [str(embedding), repo_id],
                 )
-        else:
-            # Insert new repo (scalar columns only, then update LOB/VECTOR)
-            repo_id_var = cur.var(int)
-            cur.execute("""
-                INSERT INTO repositories (
-                    full_name, owner, repo_name, description, url, homepage,
-                    language, stars, forks, open_issues, watchers,
-                    subscribers, contributor_count, recent_commit_count,
-                    has_ci, license_name, is_fork, is_archived, size_kb,
-                    default_branch, repo_created_at, repo_pushed_at,
-                    repo_updated_at
-                ) VALUES (
-                    :1, :2, :3, :4, :5, :6,
-                    :7, :8, :9, :10, :11,
-                    :12, :13, :14,
-                    :15, :16, :17, :18, :19,
-                    :20, :21, :22,
-                    :23
-                ) RETURNING id INTO :24
-            """, [
-                meta.full_name, meta.owner, meta.name,
-                meta.description, meta.url, meta.homepage,
-                meta.language,
-                meta.stars, meta.forks, meta.open_issues, meta.watchers,
-                meta.subscribers, meta.contributor_count, meta.recent_commit_count,
-                1 if meta.has_ci else 0, meta.license_name,
-                1 if meta.is_fork else 0, 1 if meta.is_archived else 0,
-                meta.size_kb, meta.default_branch,
-                meta.created_at, meta.pushed_at, meta.updated_at,
-                repo_id_var,
-            ])
-            repo_id = repo_id_var.getvalue()[0]
 
-            # Update LOB/VECTOR columns separately (ORA-24816 workaround)
-            cur.execute(
-                "UPDATE repositories SET topics = :1 WHERE id = :2",
-                [topics_json, repo_id],
-            )
-            if meta.readme_content:
-                cur.execute(
-                    "UPDATE repositories SET readme_content = :1 WHERE id = :2",
-                    [meta.readme_content, repo_id],
-                )
-            if embedding:
-                cur.execute(
-                    "UPDATE repositories SET embedding = :1 WHERE id = :2",
-                    [str(embedding), repo_id],
-                )
-
-        conn.commit()
-        conn.close()
-        return repo_id
+            conn.commit()
+            return repo_id
+        finally:
+            conn.close()
 
     def record_snapshot(self, repo_id: int, breakout_score: float = 0.0):
         """Record today's metrics snapshot for trend tracking."""
@@ -303,37 +294,39 @@ class DiscoverDB:
         Returns list of {full_name, similarity, description, stars}.
         """
         conn = self.connect()
-        cur = conn.cursor()
+        try:
+            cur = conn.cursor()
 
-        exclude_clause = ""
-        params = {"emb": str(embedding), "lim": limit}
-        if exclude_full_name:
-            exclude_clause = "WHERE full_name != :excl"
-            params["excl"] = exclude_full_name
+            exclude_clause = ""
+            params = {"emb": str(embedding), "lim": limit}
+            if exclude_full_name:
+                exclude_clause = "WHERE full_name != :excl"
+                params["excl"] = exclude_full_name
 
-        cur.execute(f"""
-            SELECT full_name, description, stars, language,
-                   VECTOR_DISTANCE(embedding, :emb, COSINE) AS distance
-            FROM repositories
-            {exclude_clause}
-            ORDER BY VECTOR_DISTANCE(embedding, :emb, COSINE)
-            FETCH FIRST :lim ROWS ONLY
-        """, params)
+            cur.execute(f"""
+                SELECT full_name, description, stars, language,
+                       VECTOR_DISTANCE(embedding, :emb, COSINE) AS distance
+                FROM repositories
+                {exclude_clause}
+                ORDER BY VECTOR_DISTANCE(embedding, :emb, COSINE)
+                FETCH FIRST :lim ROWS ONLY
+            """, params)
 
-        results = []
-        for row in cur.fetchall():
-            similarity = 1 - row[4]  # cosine distance to similarity
-            if similarity >= min_similarity:
-                results.append({
-                    "full_name": row[0],
-                    "description": row[1],
-                    "stars": row[2],
-                    "language": row[3],
-                    "similarity": round(similarity, 4),
-                })
+            results = []
+            for row in cur.fetchall():
+                similarity = 1 - row[4]  # cosine distance to similarity
+                if similarity >= min_similarity:
+                    results.append({
+                        "full_name": row[0],
+                        "description": row[1],
+                        "stars": row[2],
+                        "language": row[3],
+                        "similarity": round(similarity, 4),
+                    })
 
-        conn.close()
-        return results
+            return results
+        finally:
+            conn.close()
 
     def is_duplicate(
         self,
@@ -362,40 +355,43 @@ class DiscoverDB:
     ) -> int:
         """Save generated content (summary, analysis, social post)."""
         conn = self.connect()
-        cur = conn.cursor()
+        try:
+            cur = conn.cursor()
 
-        content_id_var = cur.var(int)
-        cur.execute("""
-            INSERT INTO generated_content (
-                repo_id, content_type, content_text, platform
-            ) VALUES (:1, :2, :3, :4)
-            RETURNING id INTO :5
-        """, [repo_id, content_type, content_text, platform, content_id_var])
+            content_id_var = cur.var(int)
+            cur.execute("""
+                INSERT INTO generated_content (
+                    repo_id, content_type, content_text, platform
+                ) VALUES (:1, :2, :3, :4)
+                RETURNING id INTO :5
+            """, [repo_id, content_type, content_text, platform, content_id_var])
 
-        conn.commit()
-        content_id = content_id_var.getvalue()[0]
-        conn.close()
-        return content_id
+            conn.commit()
+            return content_id_var.getvalue()[0]
+        finally:
+            conn.close()
 
     def save_categories(self, repo_id: int, categories: list[dict]):
         """Save category classifications for a repo."""
         conn = self.connect()
-        cur = conn.cursor()
+        try:
+            cur = conn.cursor()
 
-        for cat in categories:
-            try:
-                cur.execute("""
-                    MERGE INTO repo_categories rc
-                    USING DUAL ON (rc.repo_id = :1 AND rc.category = :2)
-                    WHEN MATCHED THEN UPDATE SET confidence = :3
-                    WHEN NOT MATCHED THEN INSERT (repo_id, category, confidence)
-                        VALUES (:1, :2, :3)
-                """, [repo_id, cat["category"], cat.get("confidence", 1.0)])
-            except oracledb.DatabaseError as e:
-                logger.warning(f"Error saving category: {e}")
+            for cat in categories:
+                try:
+                    cur.execute("""
+                        MERGE INTO repo_categories rc
+                        USING DUAL ON (rc.repo_id = :1 AND rc.category = :2)
+                        WHEN MATCHED THEN UPDATE SET confidence = :3
+                        WHEN NOT MATCHED THEN INSERT (repo_id, category, confidence)
+                            VALUES (:1, :2, :3)
+                    """, [repo_id, cat["category"], cat.get("confidence", 1.0)])
+                except oracledb.DatabaseError as e:
+                    logger.warning(f"Error saving category: {e}")
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
     def get_star_velocity(self, full_name: str, days: int = 7) -> Optional[float]:
         """
@@ -403,64 +399,41 @@ class DiscoverDB:
         current stars to the oldest snapshot within the window.
         """
         conn = self.connect()
-        cur = conn.cursor()
+        try:
+            cur = conn.cursor()
 
-        cur.execute("""
-            SELECT r.stars - NVL(s.stars, r.stars),
-                   GREATEST(TRUNC(SYSDATE) - NVL(s.snapshot_date, TRUNC(SYSDATE)), 1)
-            FROM repositories r
-            LEFT JOIN (
-                SELECT repo_id, stars, snapshot_date
-                FROM repo_snapshots
-                WHERE snapshot_date >= TRUNC(SYSDATE) - :1
-                ORDER BY snapshot_date ASC
-                FETCH FIRST 1 ROW ONLY
-            ) s ON s.repo_id = r.id
-            WHERE r.full_name = :2
-        """, [days, full_name])
+            cur.execute("""
+                SELECT r.stars - NVL(s.stars, r.stars),
+                       GREATEST(TRUNC(SYSDATE) - NVL(s.snapshot_date, TRUNC(SYSDATE)), 1)
+                FROM repositories r
+                LEFT JOIN (
+                    SELECT repo_id, stars, snapshot_date,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY repo_id ORDER BY snapshot_date ASC
+                           ) AS rn
+                    FROM repo_snapshots
+                    WHERE snapshot_date >= TRUNC(SYSDATE) - :1
+                ) s ON s.repo_id = r.id AND s.rn = 1
+                WHERE r.full_name = :2
+            """, [days, full_name])
 
-        row = cur.fetchone()
-        conn.close()
+            row = cur.fetchone()
+        finally:
+            conn.close()
 
         if row and row[1] > 0:
             return row[0] / row[1]
         return None
 
-    def get_trending_categories(self, days: int = 7, limit: int = 10) -> list[dict]:
-        """Get most common categories among recently discovered repos."""
-        conn = self.connect()
-        cur = conn.cursor()
-
-        cur.execute("""
-            SELECT rc.category, COUNT(*) AS cnt,
-                   ROUND(AVG(r.stars)) AS avg_stars
-            FROM repo_categories rc
-            JOIN repositories r ON r.id = rc.repo_id
-            WHERE r.first_seen_at >= SYSTIMESTAMP - INTERVAL :1 DAY
-            GROUP BY rc.category
-            ORDER BY cnt DESC
-            FETCH FIRST :2 ROWS ONLY
-        """, [days, limit])
-
-        results = []
-        for row in cur.fetchall():
-            results.append({
-                "category": row[0],
-                "count": row[1],
-                "avg_stars": row[2],
-            })
-
-        conn.close()
-        return results
-
     def get_repo_count(self) -> int:
         """Total repos in the database."""
         conn = self.connect()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM repositories")
-        count = cur.fetchone()[0]
-        conn.close()
-        return count
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM repositories")
+            return cur.fetchone()[0]
+        finally:
+            conn.close()
 
     def close(self):
         if self._pool:

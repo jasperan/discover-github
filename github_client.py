@@ -18,6 +18,15 @@ from github.GithubException import RateLimitExceededException, GithubException
 
 logger = logging.getLogger(__name__)
 
+# Discovery strategy definitions. Each entry fully parameterizes _search();
+# discover.py and the CLI derive their choices from these keys, so the
+# strategy knowledge lives in exactly one place.
+STRATEGIES = {
+    "trending": dict(date_field="created", since_days=1, min_stars=10, sort="stars"),
+    "hot": dict(date_field="created", since_days=7, min_stars=50, sort="stars"),
+    "surging": dict(date_field="pushed", since_days=30, min_stars=100, sort="updated"),
+}
+
 
 @dataclass
 class RepoMetadata:
@@ -55,6 +64,10 @@ class RepoMetadata:
     has_ci: bool = False           # .github/workflows exists
     readme_content: Optional[str] = None
 
+    # Populated by the persistence layer during the pipeline
+    db_id: Optional[int] = None
+    embedding: Optional[list[float]] = None
+
     def age_days(self) -> int:
         if self.created_at:
             return (datetime.now(timezone.utc) - self.created_at).days
@@ -69,34 +82,32 @@ class GitHubClient:
         Initialize with optional GitHub Personal Access Token.
         Without a token, rate limit is 60 req/hr. With token: 5000 req/hr.
         """
+        token = token or os.environ.get("GITHUB_TOKEN")
         if token:
             self.gh = Github(auth=Auth.Token(token))
         else:
-            # Check environment variable
-            env_token = os.environ.get("GITHUB_TOKEN")
-            if env_token:
-                self.gh = Github(auth=Auth.Token(env_token))
-            else:
-                logger.warning("No GitHub token provided. Rate limit: 60 req/hr.")
-                self.gh = Github()
+            logger.warning("No GitHub token provided. Rate limit: 60 req/hr.")
+            self.gh = Github()
 
-    def discover_trending(
+    def _search(
         self,
+        date_field: str,
+        since_days: int,
+        min_stars: int,
+        sort: str,
+        limit: int,
         language: Optional[str] = None,
-        since_days: int = 1,
-        limit: int = 25,
-        min_stars: int = 10,
     ) -> list[RepoMetadata]:
         """
-        Discover trending repositories using GitHub Search API.
+        Run a GitHub repository search and map results to RepoMetadata.
 
-        Uses 'created:>DATE sort:stars' to find repos gaining traction.
-        This is more reliable than scraping the trending page and gives
+        Uses the Search API ('<date_field>:>DATE stars:>=N sort:<sort>'),
+        which is more reliable than scraping the trending page and gives
         us rich metadata for free.
         """
         since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
 
-        query_parts = [f"created:>{since_date}", f"stars:>={min_stars}"]
+        query_parts = [f"{date_field}:>{since_date}", f"stars:>={min_stars}"]
         if language:
             query_parts.append(f"language:{language}")
 
@@ -104,11 +115,7 @@ class GitHubClient:
         logger.info(f"Searching GitHub: {query}")
 
         try:
-            results = self.gh.search_repositories(
-                query=query,
-                sort="stars",
-                order="desc",
-            )
+            results = self.gh.search_repositories(query=query, sort=sort, order="desc")
         except RateLimitExceededException:
             logger.error("GitHub API rate limit exceeded. Provide a GITHUB_TOKEN.")
             return []
@@ -125,71 +132,21 @@ class GitHubClient:
         logger.info(f"Discovered {len(repos)} repositories")
         return repos
 
-    def discover_hot_recent(
+    def search(
         self,
-        days_back: int = 7,
+        strategy: str,
         limit: int = 25,
-        min_stars: int = 50,
         language: Optional[str] = None,
     ) -> list[RepoMetadata]:
         """
-        Find repos created in the last N days with the most stars.
-        These are the true "breakout" repos — new and already popular.
+        Discover repositories using a named strategy from STRATEGIES.
+
+        - trending: recently created repos gaining stars (default)
+        - hot:      repos created in the last 7 days with the most stars
+        - surging:  established repos with recent push activity
         """
-        since_date = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%d")
-
-        query_parts = [f"created:>{since_date}", f"stars:>={min_stars}"]
-        if language:
-            query_parts.append(f"language:{language}")
-
-        query = " ".join(query_parts)
-
-        try:
-            results = self.gh.search_repositories(query=query, sort="stars", order="desc")
-        except GithubException as e:
-            logger.error(f"GitHub API error: {e}")
-            return []
-
-        repos = []
-        for i, repo in enumerate(results):
-            if i >= limit:
-                break
-            repos.append(self._extract_metadata(repo))
-
-        return repos
-
-    def discover_surging(
-        self,
-        days_back: int = 30,
-        limit: int = 25,
-        min_stars: int = 100,
-        language: Optional[str] = None,
-    ) -> list[RepoMetadata]:
-        """
-        Find established repos that were recently updated and are surging.
-        Sorted by 'updated' to catch repos with sudden activity spikes.
-        """
-        since_date = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%d")
-
-        query_parts = [f"pushed:>{since_date}", f"stars:>={min_stars}"]
-        if language:
-            query_parts.append(f"language:{language}")
-
-        query = " ".join(query_parts)
-
-        try:
-            results = self.gh.search_repositories(query=query, sort="updated", order="desc")
-        except GithubException as e:
-            logger.error(f"GitHub API error: {e}")
-            return []
-
-        repos = []
-        for i, repo in enumerate(results):
-            if i >= limit:
-                break
-            repos.append(self._extract_metadata(repo))
-
-        return repos
+        params = STRATEGIES[strategy]
+        return self._search(limit=limit, language=language, **params)
 
     def enrich_repo(self, meta: RepoMetadata) -> RepoMetadata:
         """

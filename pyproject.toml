@@ -8,10 +8,7 @@ dependencies = [
     "oracledb",
     "pyyaml",
     "requests",
-    "nltk",
-    "python-dotenv",
-    "sentence-transformers",
-    "scrapy"
+    "sentence-transformers"
 ]
 
 [dependency-groups]

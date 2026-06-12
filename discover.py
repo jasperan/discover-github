@@ -25,7 +25,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -33,17 +32,16 @@ from pathlib import Path
 
 import yaml
 
-from github_client import GitHubClient, RepoMetadata
+from github_client import GitHubClient, STRATEGIES
 from db import DiscoverDB
-from scoring import compute_breakout_score, rank_repos, ScoreBreakdown
+from scoring import rank_repos
 from embeddings import generate_embedding
 from analyzer import RepoAnalyzer, RepoAnalysis
 from content_formatter import (
-    format_twitter_thread,
-    format_linkedin_post,
+    ALL_FORMATS,
+    CONTENT_FORMATS,
+    build_repo_content,
     format_newsletter_entry,
-    format_discord_embed,
-    format_blog_intro,
     format_trend_synthesis_newsletter,
 )
 
@@ -69,6 +67,14 @@ def setup_logging(verbose: bool = False):
         level=level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
+    )
+
+
+def _minimal_analysis(meta) -> RepoAnalysis:
+    """Build a metadata-only analysis used when LLM analysis is unavailable."""
+    return RepoAnalysis(
+        repo_full_name=meta.full_name,
+        one_liner=meta.description or meta.full_name,
     )
 
 
@@ -102,37 +108,20 @@ def run_pipeline(args):
 
     logger.info(f"Strategy: {strategy} | Language: {language or 'all'} | Limit: {limit}")
 
-    if strategy == "trending":
-        repos = gh.discover_trending(
-            language=language, since_days=1, limit=limit, min_stars=10,
-        )
-    elif strategy == "hot":
-        repos = gh.discover_hot_recent(
-            days_back=7, limit=limit, min_stars=50, language=language,
-        )
-    elif strategy == "surging":
-        repos = gh.discover_surging(
-            days_back=30, limit=limit, min_stars=100, language=language,
-        )
-    elif strategy == "all":
+    if strategy == "all":
         # Combine all strategies, deduplicate by full_name
         seen = set()
         repos = []
-        per_strategy = max(limit // 3, 10)
+        per_strategy = max(limit // len(STRATEGIES), 10)
 
-        for strat_repos in [
-            gh.discover_trending(language=language, limit=per_strategy),
-            gh.discover_hot_recent(language=language, limit=per_strategy),
-            gh.discover_surging(language=language, limit=per_strategy),
-        ]:
-            for r in strat_repos:
+        for strat in STRATEGIES:
+            for r in gh.search(strat, limit=per_strategy, language=language):
                 if r.full_name not in seen:
                     seen.add(r.full_name)
                     repos.append(r)
         repos = repos[:limit]
     else:
-        logger.error(f"Unknown strategy: {strategy}")
-        sys.exit(1)
+        repos = gh.search(strategy, limit=limit, language=language)
 
     if not repos:
         logger.warning("No repositories discovered. Check your GitHub token and filters.")
@@ -168,8 +157,8 @@ def run_pipeline(args):
 
         # Persist to DB
         repo_id = db.upsert_repo(meta, embedding)
-        meta._db_id = repo_id  # Attach for later use
-        meta._embedding = embedding
+        meta.db_id = repo_id  # Attach for later use
+        meta.embedding = embedding
         novel_repos.append(meta)
 
     logger.info(
@@ -193,7 +182,7 @@ def run_pipeline(args):
 
     # Record snapshots
     for meta, score in ranked:
-        db.record_snapshot(meta._db_id, score.total)
+        db.record_snapshot(meta.db_id, score.total)
 
     # Log rankings
     logger.info("=" * 70)
@@ -210,102 +199,80 @@ def run_pipeline(args):
 
     # --- Step 6: LLM Analysis ---
     analyses = []
-    if not args.skip_analysis:
+    synthesis = {}
+
+    llm = None
+    skip = args.skip_analysis
+    if not skip:
         logger.info("Running 'Why This Matters' LLM analysis...")
         try:
             llm = RepoAnalyzer(config_path=args.config)
         except Exception as e:
             logger.error(f"Failed to initialize LLM analyzer: {e}")
             logger.info("Skipping analysis. Check your OCI config in config.yaml.")
-            args.skip_analysis = True
+            skip = True
 
-        if not args.skip_analysis:
-            for i, (meta, score) in enumerate(ranked):
-                logger.info(f"  [{i+1}/{len(ranked)}] Analyzing {meta.full_name}...")
+    # Similar-repo lookups, computed once per repo and reused for blog content.
+    similar_map = {}
 
-                # Find similar repos for competitive context
-                similar = db.find_similar(
-                    meta._embedding, limit=3, min_similarity=0.5,
-                    exclude_full_name=meta.full_name,
-                )
+    def _similar_for(meta):
+        if meta.full_name not in similar_map:
+            similar_map[meta.full_name] = db.find_similar(
+                meta.embedding, limit=3, min_similarity=0.5,
+                exclude_full_name=meta.full_name,
+            )
+        return similar_map[meta.full_name]
 
-                try:
-                    analysis = llm.analyze_repo(meta, score, similar)
-                    analyses.append(analysis)
-
-                    # Save categories
-                    if analysis.categories:
-                        cats = [{"category": c, "confidence": 1.0} for c in analysis.categories]
-                        db.save_categories(meta._db_id, cats)
-
-                    logger.info(f"    → {analysis.one_liner[:80]}")
-                except Exception as e:
-                    logger.warning(f"    Analysis failed: {e}")
-                    analyses.append(RepoAnalysis(
-                        repo_full_name=meta.full_name,
-                        one_liner=meta.description or meta.full_name,
-                    ))
-
-            # Trend synthesis
-            if len(analyses) >= 3:
-                logger.info("Generating cross-repo trend synthesis...")
-                try:
-                    scores_list = [s for _, s in ranked]
-                    synthesis = llm.synthesize_trends(analyses, scores_list)
-                except Exception as e:
-                    logger.warning(f"Trend synthesis failed: {e}")
-                    synthesis = {}
-            else:
-                synthesis = {}
-    else:
+    if skip:
         # Create minimal analyses from metadata
         for meta, score in ranked:
-            analyses.append(RepoAnalysis(
-                repo_full_name=meta.full_name,
-                one_liner=meta.description or meta.full_name,
-            ))
-        synthesis = {}
+            analyses.append(_minimal_analysis(meta))
+    else:
+        for i, (meta, score) in enumerate(ranked):
+            logger.info(f"  [{i+1}/{len(ranked)}] Analyzing {meta.full_name}...")
+
+            # Find similar repos for competitive context
+            similar = _similar_for(meta)
+
+            try:
+                analysis = llm.analyze_repo(meta, score, similar)
+                analyses.append(analysis)
+
+                # Save categories
+                if analysis.categories:
+                    cats = [{"category": c, "confidence": 1.0} for c in analysis.categories]
+                    db.save_categories(meta.db_id, cats)
+
+                logger.info(f"    → {analysis.one_liner[:80]}")
+            except Exception as e:
+                logger.warning(f"    Analysis failed: {e}")
+                analyses.append(_minimal_analysis(meta))
+
+        # Trend synthesis
+        if len(analyses) >= 3:
+            logger.info("Generating cross-repo trend synthesis...")
+            try:
+                scores_list = [s for _, s in ranked]
+                synthesis = llm.synthesize_trends(analyses, scores_list)
+            except Exception as e:
+                logger.warning(f"Trend synthesis failed: {e}")
+                synthesis = {}
 
     # --- Step 7: Generate content ---
     logger.info("Generating multi-platform content...")
-    formats = args.format.split(",") if args.format != "all" else [
-        "twitter", "linkedin", "newsletter", "discord", "blog",
-    ]
+    formats = args.format.split(",") if args.format != "all" else ALL_FORMATS
 
-    # Individual repo content
     for (meta, score), analysis in zip(ranked, analyses):
         repo_dir = output_dir / meta.full_name.replace("/", "__")
         repo_dir.mkdir(parents=True, exist_ok=True)
 
-        if "twitter" in formats:
-            thread = format_twitter_thread(meta, analysis, score)
-            content = "\n\n---\n\n".join(thread)
-            (repo_dir / "twitter_thread.txt").write_text(content)
-            db.save_content(meta._db_id, "twitter_thread", content, "twitter")
-
-        if "linkedin" in formats:
-            post = format_linkedin_post(meta, analysis, score)
-            (repo_dir / "linkedin_post.txt").write_text(post)
-            db.save_content(meta._db_id, "linkedin_post", post, "linkedin")
-
-        if "newsletter" in formats:
-            entry = format_newsletter_entry(meta, analysis, score)
-            (repo_dir / "newsletter_entry.md").write_text(entry)
-            db.save_content(meta._db_id, "newsletter_entry", entry, "newsletter")
-
-        if "discord" in formats:
-            embed = format_discord_embed(meta, analysis, score)
-            (repo_dir / "discord_embed.json").write_text(json.dumps(embed, indent=2))
-            db.save_content(meta._db_id, "discord_embed", json.dumps(embed), "discord")
-
-        if "blog" in formats:
-            similar = db.find_similar(
-                meta._embedding, limit=3, min_similarity=0.5,
-                exclude_full_name=meta.full_name,
-            )
-            blog = format_blog_intro(meta, analysis, score, similar)
-            (repo_dir / "blog_post.md").write_text(blog)
-            db.save_content(meta._db_id, "blog_intro", blog, "blog")
+        for fmt, (filename, content_type, platform) in CONTENT_FORMATS.items():
+            if fmt not in formats:
+                continue
+            similar = _similar_for(meta) if fmt == "blog" else None
+            text = build_repo_content(fmt, meta, analysis, score, similar)
+            (repo_dir / filename).write_text(text)
+            db.save_content(meta.db_id, content_type, text, platform)
 
         # Save raw analysis JSON
         (repo_dir / "analysis.json").write_text(json.dumps({
@@ -399,7 +366,7 @@ Examples:
 
     parser.add_argument(
         "--strategy", "-s",
-        choices=["trending", "hot", "surging", "all"],
+        choices=[*STRATEGIES, "all"],
         default="trending",
         help="Discovery strategy (default: trending)",
     )

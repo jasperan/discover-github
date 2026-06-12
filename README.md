@@ -32,7 +32,7 @@ Repos are tiered: **S** (80+) → **A** (65+) → **B** (50+) → **C** (35+) �
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12+
 - Oracle Database 23ai+ (for AI Vector Search)
 - [OCI SDK](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/sdkconfig.htm) (for GenAI analysis)
 - GitHub Personal Access Token (optional, increases rate limit from 60 to 5000 req/hr)
@@ -60,9 +60,17 @@ Repos are tiered: **S** (80+) → **A** (65+) → **B** (50+) → **C** (35+) �
 > ```
 > </details>
 
+Using [uv](https://docs.astral.sh/uv/) (recommended):
+
 ```sh
-conda create -n discover-github python=3.12
-conda activate discover-github
+uv sync
+```
+
+Or with pip in a virtual environment:
+
+```sh
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -96,20 +104,22 @@ The database schema is auto-created on first run.
 
 ```bash
 # Full pipeline with defaults (25 repos, all formats)
-python discover.py
+uv run discover.py
 
 # Filter by language, use "hot recent" strategy
-python discover.py --strategy hot --language python --limit 15
+uv run discover.py --strategy hot --language python --limit 15
 
 # Combine all strategies for maximum coverage
-python discover.py --strategy all --limit 30
+uv run discover.py --strategy all --limit 30
 
 # Fast mode: skip LLM analysis, generate only LinkedIn posts
-python discover.py --skip-analysis --format linkedin
+uv run discover.py --skip-analysis --format linkedin
 
 # Generate everything with verbose logging
-python discover.py --strategy all --limit 50 -v
+uv run discover.py --strategy all --limit 50 -v
 ```
+
+(If you installed with pip into an activated virtualenv, replace `uv run` with `python`.)
 
 ### Discovery Strategies
 
@@ -164,18 +174,6 @@ GitHub API ──→ GitHubClient ──→ RepoMetadata
 | `analyzer.py` | OCI GenAI "Why This Matters" LLM analysis |
 | `content_formatter.py` | Multi-platform content generation |
 | `embeddings.py` | Sentence-transformers embedding generation |
-
-### Legacy Pipeline
-
-The original Scrapy-based pipeline (`trending_spider.py` → `readme_reader.py` → `main.py` → `summarize_llm.py`) is preserved for backward compatibility but is superseded by `discover.py`.
-
-## LinkedIn Poster
-
-### Pre-requisites
-
-1. Create or use an existing developer application from the [LinkedIn Developer Portal](https://www.linkedin.com/developers/apps/)
-2. Request access to the Sign In With LinkedIn API product
-3. Generate a 3-legged access token using the Developer Portal [token generator tool](https://www.linkedin.com/developers/tools/oauth/token-generator), selecting the `r_liteprofile` scope
 
 ## License
 

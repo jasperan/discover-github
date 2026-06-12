@@ -13,6 +13,10 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Embedding dimensionality (all-MiniLM-L6-v2). Single source of truth shared
+# with the DB schema's VECTOR(EMBEDDING_DIM) column.
+EMBEDDING_DIM = 384
+
 # Lazy-loaded model
 _model = None
 _model_type = None  # "sentence-transformers" or "tfidf"
@@ -39,14 +43,14 @@ def _load_model():
 
 def generate_embedding(text: str, max_chars: int = 2000) -> list[float]:
     """
-    Generate a 384-dimensional embedding from text content.
+    Generate an EMBEDDING_DIM-dimensional embedding from text content.
 
     Args:
         text: README or description text to embed.
         max_chars: Truncate input to this many characters (model token limit).
 
     Returns:
-        List of 384 floats representing the text embedding.
+        List of EMBEDDING_DIM floats representing the text embedding.
     """
     global _model, _model_type
     if _model is None:
@@ -55,7 +59,7 @@ def generate_embedding(text: str, max_chars: int = 2000) -> list[float]:
     # Preprocess
     clean_text = _preprocess_for_embedding(text)
     if not clean_text:
-        return [0.0] * 384
+        return [0.0] * EMBEDDING_DIM
 
     # Truncate for token limits
     clean_text = clean_text[:max_chars]
@@ -97,13 +101,13 @@ def _tfidf_fallback(text: str) -> list[float]:
     Produces a 384-dimensional vector using feature hashing.
     """
     words = text.lower().split()
-    embedding = [0.0] * 384
+    embedding = [0.0] * EMBEDDING_DIM
 
     for word in words:
         # Feature hashing: hash word to get index and sign
         h = int(hashlib.md5(word.encode()).hexdigest(), 16)
-        idx = h % 384
-        sign = 1.0 if (h // 384) % 2 == 0 else -1.0
+        idx = h % EMBEDDING_DIM
+        sign = 1.0 if (h // EMBEDDING_DIM) % 2 == 0 else -1.0
         embedding[idx] += sign
 
     # L2 normalize

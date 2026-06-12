@@ -9,7 +9,7 @@ Generates platform-native content from a single RepoAnalysis:
 - Discord/Slack: Embed-style compact summary
 """
 
-import textwrap
+import json
 from datetime import datetime, timezone
 
 from analyzer import RepoAnalysis
@@ -296,6 +296,46 @@ def format_trend_synthesis_newsletter(synthesis: dict, date: str | None = None) 
         header += f"**Significance:** {trend.get('significance', '')}\n\n"
 
     return header
+
+
+# Per-repo content formats. Each entry maps a format key to
+# (output filename, content_type, platform). Render order is fixed here so the
+# orchestrator stays a thin loop.
+CONTENT_FORMATS = {
+    "twitter": ("twitter_thread.txt", "twitter_thread", "twitter"),
+    "linkedin": ("linkedin_post.txt", "linkedin_post", "linkedin"),
+    "newsletter": ("newsletter_entry.md", "newsletter_entry", "newsletter"),
+    "discord": ("discord_embed.json", "discord_embed", "discord"),
+    "blog": ("blog_post.md", "blog_intro", "blog"),
+}
+
+ALL_FORMATS = list(CONTENT_FORMATS)
+
+
+def build_repo_content(
+    fmt: str,
+    meta: RepoMetadata,
+    analysis: RepoAnalysis,
+    score: ScoreBreakdown,
+    similar_repos: list[dict] | None = None,
+) -> str:
+    """
+    Render a single content format for a repo, returning the text to persist.
+
+    The same string is written to the output file and stored in the database;
+    Discord embeds are pretty-printed JSON in both places.
+    """
+    if fmt == "twitter":
+        return "\n\n---\n\n".join(format_twitter_thread(meta, analysis, score))
+    if fmt == "linkedin":
+        return format_linkedin_post(meta, analysis, score)
+    if fmt == "newsletter":
+        return format_newsletter_entry(meta, analysis, score)
+    if fmt == "discord":
+        return json.dumps(format_discord_embed(meta, analysis, score), indent=2)
+    if fmt == "blog":
+        return format_blog_intro(meta, analysis, score, similar_repos)
+    raise ValueError(f"Unknown content format: {fmt}")
 
 
 # --- Helpers ---

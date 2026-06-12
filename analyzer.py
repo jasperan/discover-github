@@ -14,8 +14,7 @@ Uses OCI Generative AI with structured prompts.
 import json
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass, field, fields
 
 import oci
 import yaml
@@ -230,30 +229,10 @@ class RepoAnalyzer:
             response = self.client.chat(chat_detail)
             return response.data.chat_response.text
         except oci.exceptions.ServiceError as e:
+            # Surface the failure so the caller can fall back to a metadata-only
+            # analysis instead of feeding prose into a JSON parser.
             logger.error(f"OCI GenAI error: {e}")
-            # Fallback: try the summarize endpoint with truncated input
-            return self._fallback_summarize(prompt[:4000])
-
-    def _fallback_summarize(self, text: str) -> str:
-        """Fallback to the original summarize API if chat fails."""
-        try:
-            summarize_detail = oci.generative_ai_inference.models.SummarizeTextDetails()
-            summarize_detail.serving_mode = oci.generative_ai_inference.models.OnDemandServingMode(
-                model_id="cohere.command",
-            )
-            summarize_detail.compartment_id = self.compartment_id
-            summarize_detail.input = text
-            summarize_detail.additional_command = (
-                "Generate a teaser summary. Share an interesting insight to captivate attention."
-            )
-            summarize_detail.length = "LONG"
-            summarize_detail.temperature = 0.25
-
-            response = self.client.summarize_text(summarize_detail)
-            return response.data.summary
-        except Exception as e:
-            logger.error(f"Fallback summarize also failed: {e}")
-            return ""
+            raise
 
     def _parse_analysis(self, full_name: str, response_text: str) -> RepoAnalysis:
         """Parse LLM JSON response into a RepoAnalysis dataclass."""
@@ -267,16 +246,12 @@ class RepoAnalyzer:
             analysis.one_liner = response_text[:200]
             return analysis
 
-        analysis.one_liner = data.get("one_liner", "")
-        analysis.problem_solved = data.get("problem_solved", "")
-        analysis.whats_novel = data.get("whats_novel", "")
-        analysis.who_should_care = data.get("who_should_care", "")
-        analysis.key_features = data.get("key_features", [])
-        analysis.potential_impact = data.get("potential_impact", "")
-        analysis.competitive_landscape = data.get("competitive_landscape", "")
-        analysis.red_flags = data.get("red_flags", [])
-        analysis.categories = data.get("categories", [])
-        analysis.social_hooks = data.get("social_hooks", [])
+        # Copy every LLM-supplied field; repo_full_name and raw_summary are set
+        # by us, not the model, so they are skipped.
+        for f in fields(RepoAnalysis):
+            if f.name in ("repo_full_name", "raw_summary") or f.name not in data:
+                continue
+            setattr(analysis, f.name, data[f.name])
 
         return analysis
 
