@@ -3,13 +3,13 @@ Embedding generation for semantic search and deduplication.
 
 Uses a lightweight sentence-transformers model to generate embeddings
 for README content, enabling vector similarity search in Oracle DB.
-Falls back to a simple TF-IDF approach if sentence-transformers is unavailable.
+Falls back to a deterministic hashed feature vector (feature hashing) if
+sentence-transformers is unavailable.
 """
 
 import hashlib
 import logging
 import re
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

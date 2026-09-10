@@ -10,7 +10,6 @@ Stores repository metadata with vector embeddings, enabling:
 
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Optional
 
 import oracledb

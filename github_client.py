@@ -10,7 +10,7 @@ import os
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Optional
 
 from github import Github, Auth
