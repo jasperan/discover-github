@@ -41,6 +41,9 @@ def _load_model():
         _model_type = "tfidf"
 
 
+_PREPROCESS_WINDOW = 4
+
+
 def generate_embedding(text: str, max_chars: int = 2000) -> list[float]:
     """
     Generate an EMBEDDING_DIM-dimensional embedding from text content.
@@ -57,7 +60,10 @@ def generate_embedding(text: str, max_chars: int = 2000) -> list[float]:
         _load_model()
 
     # Preprocess
-    clean_text = _preprocess_for_embedding(text)
+    # Bound untrusted repository text BEFORE regex cleaning: the markdown
+    # patterns backtrack quadratically on unclosed delimiters. Markdown/URL
+    # stripping shrinks text, so keep a generous window for the final slice.
+    clean_text = _preprocess_for_embedding((text or "")[: max_chars * _PREPROCESS_WINDOW])
     if not clean_text:
         return [0.0] * EMBEDDING_DIM
 
